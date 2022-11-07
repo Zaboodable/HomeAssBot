@@ -5,7 +5,6 @@ namespace HomeAssBot
 {
     internal class CommandParser
     {
-
         private string prefix = "!";
         private string arg_prefix = "-";
         public CommandParser()
@@ -20,14 +19,14 @@ namespace HomeAssBot
             var split = text.Split(' ');
 
             // Extract the command from the text
-            var command_split = split[0];
+            var command_split = split[0].ToLower();
             if (command_split.StartsWith(prefix) == false)
             {
                 return null;
             }
             else
             {
-                commandExpando.Command = command_split.Replace(prefix, "");
+                commandExpando.command = command_split.Replace(prefix, "");
             }
 
             // Split the string into its arguments
@@ -84,14 +83,14 @@ namespace HomeAssBot
         {
             get
             {
-                object value;
+                object? value;
                 var dict = ((IDictionary<string, object>)_dynamicObject);
                 if (dict.ContainsKey(key))
                 {
                     value = dict[key];
                 } else
                 {
-                    value = $"No property with name {key}";
+                    value = null;
                 }
                 return value;
             }
