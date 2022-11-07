@@ -18,7 +18,7 @@ namespace HomeAssBot
     {
         private string _token;
         private string _applicationPath;
-        private string _imagePath = "images\\";
+        private string _imagePath = "images/";
 
         // Discord
         private DiscordClient _discordClient;
@@ -31,7 +31,7 @@ namespace HomeAssBot
 
         public void Initialize()
         {
-            _applicationPath = AppContext.BaseDirectory + @"..\..\..\";
+            _applicationPath = AppContext.BaseDirectory + @"../../../";
             this._token = System.IO.File.ReadAllText(_applicationPath + "token.txt");
             this._commandParser = new CommandParser();
             this._httpClient = new HttpClient();
@@ -47,8 +47,6 @@ namespace HomeAssBot
             };
             _discordClient = new DiscordClient(config);
 
-
-
             _discordClient.MessageCreated += (s, e) =>
             {
                 if (e.Author.IsBot)
@@ -60,7 +58,6 @@ namespace HomeAssBot
                         await ProcessCommand(s, e);
                     });
                 }
-
                 return Task.CompletedTask;
             };
 
@@ -170,7 +167,8 @@ namespace HomeAssBot
                     var info_steps = infoparse["steps"].ToString();
                     //Console.WriteLine(info_steps);
 
-                    string file_path = _applicationPath + _imagePath + $"{info_prompt}{info_seed}_{info_steps}steps.png";
+                    string file_name = $"{info_prompt}{info_seed}_{info_steps}steps.png";
+                    string file_path = _applicationPath + _imagePath + file_name;
                     if (Directory.Exists(_applicationPath + _imagePath) == false)
                     {
                         Directory.CreateDirectory(_applicationPath + _imagePath);
@@ -195,23 +193,20 @@ namespace HomeAssBot
 
                     using (var fs = new FileStream(ai_info.Full_Path, FileMode.Open, FileAccess.Read))
                     {
-                        var msg = await new DiscordMessageBuilder()
-                            .WithFiles(new Dictionary<string, Stream>() { { ai_info.Full_Path, fs } })
-                            .SendAsync(message.Channel);
-                        await msg.DeleteAsync();
-
-                        var image_url = msg.Attachments.FirstOrDefault().Url;
-                        msg = await new DiscordMessageBuilder()
-                            .WithEmbed(new DiscordEmbedBuilder()
-                            {
-                                Title = ai_info.Prompt,
-                                ImageUrl = image_url
-                            }
+                        // Fixed finally
+                        // file attached to message
+                        // embed image url references the attached image name eg attachment://image.png
+                        var msg = new DiscordMessageBuilder()
+                        .WithFiles(new Dictionary<string, Stream>() { { ai_info.Full_Path, fs } })
+                        .WithEmbed(new DiscordEmbedBuilder()
+                            .WithTitle(ai_info.Prompt)
+                            .WithImageUrl(Formatter.AttachedImageUrl(file_name))
                             .AddField("Seed", ai_info.Seed)
                             .AddField("Steps", ai_info.Steps)
                             .WithFooter("Negative Prompts: " + ai_info.NegativePrompts)
-                            )
-                            .SendAsync(message.Channel);
+                        .Build());
+                        Console.WriteLine(msg.Embed.Image.Url);
+                        await msg.SendAsync(message.Channel);
                     }
                 }
             }
