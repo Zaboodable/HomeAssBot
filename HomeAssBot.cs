@@ -11,6 +11,7 @@ using Newtonsoft.Json.Linq;
 using DSharpPlus.Entities;
 using System.Drawing;
 using System.Runtime;
+using System.IO;
 
 namespace HomeAssBot
 {
@@ -19,12 +20,16 @@ namespace HomeAssBot
         private string _token;
         private string _applicationPath;
         private string _imagePath = "images/";
+        private char[] _filename_bad_chars;
 
         // Discord
         private DiscordClient _discordClient;
 
         // Commands
         private CommandParser _commandParser;
+
+        // AI Stable Diffusion
+        private List<string> _ai_samplers = new List<string>();
 
         // http
         HttpClient _httpClient;
@@ -35,6 +40,29 @@ namespace HomeAssBot
             this._token = System.IO.File.ReadAllText(_applicationPath + "token.txt");
             this._commandParser = new CommandParser();
             this._httpClient = new HttpClient();
+            this._filename_bad_chars = Path.GetInvalidFileNameChars();
+        }
+
+        private void Initialize_AI_Values()
+        {
+            var httpWebRequest = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:7860/sdapi/v1/samplers");
+            httpWebRequest.ContentType = "application/json";
+            httpWebRequest.Method = "GET";
+            var httpResponse = (HttpWebResponse)httpWebRequest.GetResponse();
+            using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
+            {
+                var result = streamReader.ReadToEnd();
+                JArray parsed_response = JArray.Parse(result);
+                foreach (JObject item in parsed_response)
+                {
+                    JToken name;
+                    if (item.TryGetValue("name", out name))
+                    {
+                        _ai_samplers.Add(name.Value<string>());
+                    }
+                }
+
+            }
         }
 
         public async Task Run()
@@ -46,6 +74,10 @@ namespace HomeAssBot
                 Intents = DiscordIntents.All
             };
             _discordClient = new DiscordClient(config);
+
+
+            Initialize_AI_Values();
+
 
             _discordClient.MessageCreated += (s, e) =>
             {
@@ -72,6 +104,8 @@ namespace HomeAssBot
             public string Seed;
             public string Steps;
             public string NegativePrompts;
+            public string Sampler;
+            public string Scale;
         };
         private async Task ProcessCommand(DiscordClient sender, MessageCreateEventArgs e)
         {
@@ -83,6 +117,7 @@ namespace HomeAssBot
             if (parsed_command == null)
                 return;
 
+            string response = "default response";
 
             var command = parsed_command["command"];
             if (command == null)
@@ -91,14 +126,29 @@ namespace HomeAssBot
                 return;
             }
 
-
-
-            string response = "default response";
             if (command == "ai")
             {
                 var prompt = parsed_command["!ai"];
-                Console.WriteLine(prompt);
+                Console.WriteLine(message_content);
 
+                if (parsed_command["help"] != null || parsed_command["h"] != null)
+                {
+                    await e.Message.RespondAsync($"soon come help i add when back.\n!ai <prompt> -steps 1-100 -sampler <sampler> -seed <seed> -scale <scale>");
+                    return;
+                }
+                if (parsed_command["samplers"] != null)
+                {
+                    string samplerList = "";
+                    foreach (var sampler in _ai_samplers)
+                    {
+                        samplerList += "[\"" + sampler + "\"], ";
+                    }
+                    samplerList.TrimEnd(',');
+                    await e.Message.RespondAsync($"Here is a list of available samplers, different samplers will generate a different image with the same seed:\n{samplerList}\nuse with -sampler.\nexample: !ai chicken -sampler Euler a");
+                    return;
+                }
+
+                // STEPS -------------------------------------------------------
                 var cfg_steps = 20;
                 try
                 {
@@ -111,7 +161,8 @@ namespace HomeAssBot
                     cfg_steps = 1;
                 if (cfg_steps > 100)
                     cfg_steps = 100;
-
+                
+                // SEED --------------------------------------------------------
                 Int64 cfg_seed = new Random(Guid.NewGuid().GetHashCode()).NextInt64();
                 try
                 {
@@ -121,7 +172,40 @@ namespace HomeAssBot
                 {
                 }
 
+                // NEGATIVE PROMPT --------------------------------------------------------
                 var cfg_negative = parsed_command["negative"];
+
+                // SAMPLER --------------------------------------------------------
+                var cfg_sampler = "Euler";
+                var parsed_sampler = parsed_command["sampler"];
+                if (parsed_sampler != null)
+                {
+                    parsed_sampler = parsed_sampler.TrimEnd();
+                    if (_ai_samplers.Contains(parsed_sampler))
+                        cfg_sampler = parsed_sampler;
+                    else
+                    {
+                        string samplerList = "";
+                        foreach (var sampler in _ai_samplers)
+                        {
+                            samplerList += sampler + ", ";
+                        }
+                        samplerList.TrimEnd(',');
+                        await e.Message.RespondAsync($"\"{parsed_sampler}\" is not in the list of installed samplers\n{samplerList}");
+                    }
+                }
+
+                // SCALE --------------------------------------------------------
+                string parsed_scale = parsed_command["scale"];
+                float cfg_scale = 7.0f;
+                try
+                {
+                    cfg_scale = Single.Parse(parsed_scale);
+                }
+                catch
+                {
+                }
+
 
                 string url = "http://127.0.0.1:7860/sdapi/v1/txt2img";
 
@@ -136,6 +220,8 @@ namespace HomeAssBot
                     json += $"\"prompt\": \"{prompt}\",";
                     json += $"\"steps\": \"{cfg_steps.ToString()}\",";
                     json += $"\"restore_faces\": true,";
+                    json += $"\"sampler_index\": \"{cfg_sampler}\",";
+                    json += $"\"cfg_scale\": \"{cfg_scale}\",";
                     if (cfg_negative != null)
                         json += $"\"negative_prompt\": \"{cfg_negative}\",";
 
@@ -158,16 +244,20 @@ namespace HomeAssBot
 
                     // Metadata ----------------------------------------
                     var image_info = parsed_response["info"].ToString();
+                    
                     JObject infoparse = JObject.Parse(image_info);
-                    //Console.WriteLine("INFO: " + infoparse);
                     var info_prompt = infoparse["prompt"].ToString().Replace(' ', '_');
-                    //Console.WriteLine(info_prompt);
                     var info_seed = infoparse["seed"].ToString();
-                    //Console.WriteLine(info_seed);
                     var info_steps = infoparse["steps"].ToString();
-                    //Console.WriteLine(info_steps);
+                    var info_sampler = infoparse["sampler"].ToString();
+                    var info_scale = infoparse["cfg_scale"].ToString();
 
                     string file_name = $"{info_prompt}{info_seed}_{info_steps}steps.png";
+                    foreach (char bc in _filename_bad_chars)
+                    {
+                        file_name = file_name.Replace(bc, '_');
+                    }
+
                     string file_path = _applicationPath + _imagePath + file_name;
                     if (Directory.Exists(_applicationPath + _imagePath) == false)
                     {
@@ -188,6 +278,8 @@ namespace HomeAssBot
                         Prompt = prompt,
                         Seed = info_seed,
                         Steps = info_steps,
+                        Sampler = info_sampler,
+                        Scale = info_scale,
                         NegativePrompts = cfg_negative
                     };
 
@@ -203,10 +295,11 @@ namespace HomeAssBot
                             .WithImageUrl(Formatter.AttachedImageUrl(file_name))
                             .AddField("Seed", ai_info.Seed)
                             .AddField("Steps", ai_info.Steps)
+                            .AddField("Sampler", ai_info.Sampler)
+                            .AddField("CFG Scale", ai_info.Scale)
                             .WithFooter("Negative Prompts: " + ai_info.NegativePrompts)
                         .Build());
-                        Console.WriteLine(msg.Embed.Image.Url);
-                        await msg.SendAsync(message.Channel);
+                        await e.Message.RespondAsync(msg);
                     }
                 }
             }

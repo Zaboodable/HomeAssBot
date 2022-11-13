@@ -38,11 +38,11 @@ namespace HomeAssBot
                 // eg: -help -> help
                 var arg_word_split = arg.Split(' ');
                 var arg_name = arg_word_split[0];
-                
+
                 // check the content after the prefixed argument for the argument value(s)
+                var x = commandExpando as IDictionary<string, object>;
                 if (arg_word_split.Length > 1)
                 {
-                    var x = commandExpando as IDictionary<string, object>;
                     var arg_values = arg_word_split.Take(new Range(1, arg_word_split.Length)).ToArray();
                     if (arg_values.Count() == 1)
                     {
@@ -62,6 +62,9 @@ namespace HomeAssBot
                         }
                         x.Add(arg_name, s);
                     }
+                } else
+                {
+                    x.Add(arg_name, "no value");
                 }
             }
 
